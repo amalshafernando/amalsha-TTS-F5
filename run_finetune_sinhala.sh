@@ -5,7 +5,7 @@
 
 set -e
 
-DATASET_NAME="Sinhala_char"
+DATASET_NAME="Sinhala_char_custom"
 VOCAB_PATH="data/${DATASET_NAME}/vocab.txt"
 CKPT_DIR="ckpts/${DATASET_NAME}"
 
