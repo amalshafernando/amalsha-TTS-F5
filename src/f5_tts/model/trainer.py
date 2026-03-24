@@ -182,6 +182,31 @@ class Trainer:
                         os.remove(os.path.join(self.checkpoint_path, oldest_checkpoint))
                         print(f"Removed old checkpoint: {oldest_checkpoint}")
 
+    @staticmethod
+    def _filter_mismatched_keys(state_dict: dict, model_state_dict: dict, label: str = "") -> dict:
+        """Remove keys from *state_dict* whose tensor shape doesn't match *model_state_dict*.
+
+        This allows cross-lingual fine-tuning where the vocabulary (text embedding)
+        size in a pretrained checkpoint differs from the current model.  All
+        acoustic / diffusion weights are preserved; only mismatched layers are
+        skipped and left at their random initialisation.
+        """
+        filtered, skipped = {}, []
+        for k, v in state_dict.items():
+            model_key = k
+            if model_key in model_state_dict:
+                if v.shape == model_state_dict[model_key].shape:
+                    filtered[k] = v
+                else:
+                    skipped.append((k, tuple(v.shape), tuple(model_state_dict[model_key].shape)))
+            else:
+                filtered[k] = v  # new key — let load_state_dict handle it
+        if skipped and label:
+            print(f"[F5-TTS] Skipping {len(skipped)} mismatched key(s) in {label} (vocab-size mismatch is expected):")
+            for name, src_shape, dst_shape in skipped:
+                print(f"  {name}: checkpoint {src_shape} → model {dst_shape}")
+        return filtered
+
     def load_checkpoint(self):
         if (
             not exists(self.checkpoint_path)
@@ -229,7 +254,13 @@ class Trainer:
                 del checkpoint["ema_model_state_dict"][key]
 
         if self.is_main:
-            self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"])
+            # Filter out keys with shape mismatches (e.g. vocab embedding when fine-tuning
+            # a pretrained English model on a language with a different vocabulary size).
+            ema_sd_raw = checkpoint["ema_model_state_dict"]
+            ema_sd = self._filter_mismatched_keys(
+                ema_sd_raw, self.ema_model.state_dict(), label="EMA model"
+            )
+            self.ema_model.load_state_dict(ema_sd, strict=False)
 
         if "update" in checkpoint or "step" in checkpoint:
             # patch for backward compatibility, with before f992c4e
@@ -244,7 +275,12 @@ class Trainer:
                 if key in checkpoint["model_state_dict"]:
                     del checkpoint["model_state_dict"][key]
 
-            self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+            model_sd = self._filter_mismatched_keys(
+                checkpoint["model_state_dict"],
+                self.accelerator.unwrap_model(self.model).state_dict(),
+                label="model",
+            )
+            self.accelerator.unwrap_model(self.model).load_state_dict(model_sd, strict=False)
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             if self.scheduler:
                 self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
@@ -255,7 +291,12 @@ class Trainer:
                 for k, v in checkpoint["ema_model_state_dict"].items()
                 if k not in ["initted", "update", "step"]
             }
-            self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+            model_sd = self._filter_mismatched_keys(
+                checkpoint["model_state_dict"],
+                self.accelerator.unwrap_model(self.model).state_dict(),
+                label="model (from EMA)",
+            )
+            self.accelerator.unwrap_model(self.model).load_state_dict(model_sd, strict=False)
             update = 0
 
         del checkpoint
