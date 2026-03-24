@@ -71,6 +71,14 @@ def parse_args():
         action="store_true",
         help="Use 8-bit Adam optimizer from bitsandbytes",
     )
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default=None,
+        help="Absolute path to the preprocessed dataset directory (must contain raw.arrow or raw/, and duration.json). "
+             "When provided, bypasses the default relative data path derived from dataset_name + tokenizer suffix, "
+             "which avoids the double-suffix bug (e.g. Sinhala_char_custom_custom).",
+    )
 
     return parser.parse_args()
 
@@ -202,7 +210,17 @@ def main():
         bnb_optimizer=args.bnb_optimizer,
     )
 
-    train_dataset = load_dataset(args.dataset_name, tokenizer, mel_spec_kwargs=mel_spec_kwargs)
+    if args.data_dir:
+        # Use explicit path — avoids the dataset_name + tokenizer double-suffix bug
+        train_dataset = load_dataset(
+            args.data_dir,
+            tokenizer,
+            dataset_type="CustomDatasetPath",
+            mel_spec_kwargs=mel_spec_kwargs,
+        )
+    else:
+        # Legacy: path resolved as data/{dataset_name}_{tokenizer} relative to installed package
+        train_dataset = load_dataset(args.dataset_name, tokenizer, mel_spec_kwargs=mel_spec_kwargs)
 
     trainer.train(
         train_dataset,

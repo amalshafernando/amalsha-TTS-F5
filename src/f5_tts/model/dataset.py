@@ -278,6 +278,7 @@ def load_dataset(
         )
 
     elif dataset_type == "CustomDatasetPath":
+        preprocessed_mel = False  # raw audio; mel is computed on-the-fly during training
         try:
             train_dataset = load_from_disk(f"{dataset_name}/raw")
         except:  # noqa: E722
